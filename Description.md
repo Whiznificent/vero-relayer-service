@@ -1,0 +1,1 @@
+Node.js service that listens for GitHub webhooks and automatically calls `register_task` on the Vero Soroban contract whenever a `wave-contribution` PR is merged. Bridges GitHub activity to Stellar — no manual steps, every merged contribution is recorded on-chain instantly.
