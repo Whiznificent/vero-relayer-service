@@ -24,7 +24,7 @@ async function registerTaskOnChain(githubId, options = {}) {
   const { STELLAR_SECRET_KEY, STELLAR_NETWORK } = process.env;
   const estimateFee = options.estimateFee || estimateStellarFee;
   const submit = options.submitTransaction || submitTransaction;
-async function registerTaskOnChain(githubId) {
+
   const secretKey = process.env.STELLAR_SECRET_KEY;
   if (!secretKey) {
     throw new Error('STELLAR_SECRET_KEY environment variable is not set');
@@ -55,14 +55,14 @@ async function registerTaskOnChain(githubId) {
 
   console.log(`[stellar] Submitting transaction for PR #${githubId}...`);
 
-  const result = await broadcastTransaction(server, transaction);
+  const broadcastResult = await broadcastTransaction(server, transaction);
 
   const fee = await estimateFee();
 
   console.log(`[stellar] Compiling transaction for GitHub PR #${githubId}...`);
   console.log(`[stellar] Transaction envelope built: { op: "manageData", key: "vero:pr:${githubId}", value: "registered", fee: "${fee}" }`);
 
-  const result = await submit({
+  const submitResult = await submit({
     githubId,
     fee,
     operation: 'manageData',
@@ -70,10 +70,10 @@ async function registerTaskOnChain(githubId) {
     value: 'registered'
   });
 
-  console.log(`[stellar] Transaction submitted (simulated). Hash: ${result.hash}`);
+  console.log(`[stellar] Transaction submitted (simulated). Hash: ${submitResult.hash}`);
   console.log(`[stellar] PR #${githubId} successfully registered on-chain.`);
-  console.log(`[stellar] PR #${githubId} successfully registered on-chain. Hash: ${result.hash}`);
-  return result;
+  console.log(`[stellar] PR #${githubId} successfully registered on-chain. Hash: ${submitResult.hash}`);
+  return submitResult;
 }
 
 /**
