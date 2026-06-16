@@ -12,6 +12,8 @@
     "simulate": "node scripts/mock-webhook.js",
     "test": "node --test",
     "typecheck": "tsc --noEmit"
+    "simulate": "node scripts/mock-webhook.js",
+    "test": "jest"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "12.3.0",
@@ -24,5 +26,11 @@
     "@types/node": "^25.9.3",
     "nodemon": "3.1.4",
     "typescript": "^6.0.3"
+    "prom-client": "^15.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "3.1.4",
+    "jest": "29.7.0",
+    "supertest": "6.3.4"
   }
 }
