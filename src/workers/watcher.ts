@@ -1,3 +1,5 @@
+const { logger } = require('../logger');
+
 const MAX_RETRIES = 3;
 const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -16,13 +18,13 @@ class TransactionWatcher {
         
         if (timeSinceSubmission > TIMEOUT_MS) {
           if (tx.retries < MAX_RETRIES) {
-            console.log(`[Watcher] Tx ${txId} stalled. Re-queuing (Retry ${tx.retries + 1}/${MAX_RETRIES})`);
+            logger.info({ txId, retry: tx.retries + 1, maxRetries: MAX_RETRIES }, 'transaction stalled and re-queued');
             tx.status = 'requeued';
             tx.retries += 1;
             tx.lastRetryAt = now;
             requeuedCount++;
           } else {
-            console.log(`[Watcher] Tx ${txId} stalled. Max retries reached. Marking as failed.`);
+            logger.warn({ txId, retries: tx.retries }, 'transaction stalled beyond max retries');
             tx.status = 'failed';
           }
           this.db.set(txId, tx);

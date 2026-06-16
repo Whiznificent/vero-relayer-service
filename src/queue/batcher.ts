@@ -10,6 +10,8 @@
  * (Stellar enforces a hard limit of 100 ops per transaction).
  */
 
+const { logger } = require('../logger');
+
 type FlushFn = (ids: number[]) => Promise<void>;
 
 const MAX_BATCH_SIZE = 50; // hard cap — Stellar max is 100 ops
@@ -38,8 +40,8 @@ export class EventBatcher {
     }
     if (this.queue.length === 0) return;
     const batch = this.queue.splice(0);
-    this.flush(batch).catch(err =>
-      console.error('[batcher] flush error:', err)
-    );
+    this.flush(batch).catch(err => {
+      logger.error({ error: err.message }, 'batcher flush failed');
+    });
   }
 }

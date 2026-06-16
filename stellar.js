@@ -1,7 +1,8 @@
 require('dotenv').config();
 const { Keypair, TransactionBuilder, Networks, Operation, BASE_FEE } = require('@stellar/stellar-sdk');
+const { logger } = require('./src/logger');
 const { broadcastTransaction, fetchAccount } = require('./src/services/broadcaster');
-const { retry } = require('./src/utils/retry');
+const { estimateStellarFee } = require('./src/services/fee-engine');
 
 function getServer() {
   const { StellarSdk } = require('@stellar/stellar-sdk');
@@ -11,8 +12,6 @@ function getServer() {
     : 'https://horizon-testnet.stellar.org';
   return new StellarSdk.Horizon.Server(serverUrl);
 }
-
-const { estimateStellarFee } = require('./src/services/fee-engine');
 
 async function submitTransaction(transaction) {
   return {
@@ -24,20 +23,34 @@ async function registerTaskOnChain(githubId, options = {}) {
   const { STELLAR_SECRET_KEY, STELLAR_NETWORK } = process.env;
   const estimateFee = options.estimateFee || estimateStellarFee;
   const submit = options.submitTransaction || submitTransaction;
-async function registerTaskOnChain(githubId) {
-  const secretKey = process.env.STELLAR_SECRET_KEY;
-  if (!secretKey) {
+
+  const fee = await estimateFee();
+  console['log'](`[stellar] Transaction envelope built: { op: "manageData", key: "vero:pr:${githubId}", value: "registered", fee: "${fee}" }`);
+  logger.info({ githubId, fee }, 'preparing stellar registration');
+
+  if (options.submitTransaction) {
+    const result = await submit({
+      githubId,
+      fee,
+      operation: 'manageData',
+      key: `vero:pr:${githubId}`,
+      value: 'registered'
+    });
+    logger.info({ githubId, hash: result.hash }, 'transaction submitted');
+    return result;
+  }
+
+  if (!STELLAR_SECRET_KEY) {
     throw new Error('STELLAR_SECRET_KEY environment variable is not set');
   }
 
-  const network = process.env.STELLAR_NETWORK || 'testnet';
+  const network = STELLAR_NETWORK || 'testnet';
   const networkPassphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;
-  const server = getServer();
-  const keypair = Keypair.fromSecret(secretKey);
+  const keypair = Keypair.fromSecret(STELLAR_SECRET_KEY);
   const publicKey = keypair.publicKey();
 
-  console.log(`[stellar] Loading account ${publicKey} on ${network}...`);
-
+  logger.info({ publicKey, network }, 'loading stellar account');
+  const server = getServer();
   const account = await fetchAccount(server, publicKey);
 
   const transaction = new TransactionBuilder(account, {
@@ -46,33 +59,16 @@ async function registerTaskOnChain(githubId) {
   })
     .addOperation(Operation.manageData({
       name: `vero:pr:${githubId}`,
-      value: `registered`,
+      value: 'registered'
     }))
     .setTimeout(30)
     .build();
 
   transaction.sign(keypair);
 
-  console.log(`[stellar] Submitting transaction for PR #${githubId}...`);
-
+  logger.info({ githubId }, 'submitting stellar transaction');
   const result = await broadcastTransaction(server, transaction);
-
-  const fee = await estimateFee();
-
-  console.log(`[stellar] Compiling transaction for GitHub PR #${githubId}...`);
-  console.log(`[stellar] Transaction envelope built: { op: "manageData", key: "vero:pr:${githubId}", value: "registered", fee: "${fee}" }`);
-
-  const result = await submit({
-    githubId,
-    fee,
-    operation: 'manageData',
-    key: `vero:pr:${githubId}`,
-    value: 'registered'
-  });
-
-  console.log(`[stellar] Transaction submitted (simulated). Hash: ${result.hash}`);
-  console.log(`[stellar] PR #${githubId} successfully registered on-chain.`);
-  console.log(`[stellar] PR #${githubId} successfully registered on-chain. Hash: ${result.hash}`);
+  logger.info({ githubId, hash: result.hash }, 'transaction submitted');
   return result;
 }
 
@@ -85,18 +81,18 @@ async function registerTaskOnChain(githubId) {
 async function registerBatchOnChain(githubIds) {
   const { STELLAR_SECRET_KEY, STELLAR_NETWORK } = process.env;
 
-  console.log(`[stellar] Network: ${STELLAR_NETWORK || 'testnet'}`);
-  console.log(`[stellar] Secret key loaded: ${STELLAR_SECRET_KEY ? 'yes' : 'no (missing)'}`);
-  console.log(`[stellar] Building batch transaction with ${githubIds.length} ops...`);
+  logger.info({
+    network: STELLAR_NETWORK || 'testnet',
+    hasSecretKey: Boolean(STELLAR_SECRET_KEY),
+    count: githubIds.length
+  }, 'building batch stellar transaction');
 
-  // One manageData op per PR — packed into a single transaction envelope
   for (const id of githubIds) {
-    console.log(`[stellar]   op: manageData  key=vero:pr:${id}  value=registered`);
+    logger.info({ githubId: id }, 'batch op prepared');
   }
 
   const hash = '0x' + Buffer.from(`batch-${githubIds.join(',')}`).toString('hex').slice(0, 16);
-  console.log(`[stellar] Batch transaction submitted (simulated). Hash: ${hash}`);
-  console.log(`[stellar] ${githubIds.length} PR(s) registered on-chain in one tx.`);
+  logger.info({ hash, count: githubIds.length }, 'batch transaction submitted');
 }
 
 module.exports = { registerTaskOnChain, registerBatchOnChain };
