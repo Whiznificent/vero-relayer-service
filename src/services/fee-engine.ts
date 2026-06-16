@@ -1,4 +1,5 @@
 import { rpc } from '@stellar/stellar-sdk';
+import { logger as defaultLogger } from '../logger';
 
 export const DEFAULT_BASE_FEE = '100';
 export const DEFAULT_MIN_FEE = '100';
@@ -269,7 +270,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 }
 
 function getLogger(options: FeeEngineOptions): Logger {
-  return options.logger || console;
+  return options.logger || defaultLogger;
 }
 
 function warn(logger: Logger, message: string): void {

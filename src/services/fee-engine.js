@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const { rpc } = require('@stellar/stellar-sdk');
+const { logger: defaultLogger } = require('../logger');
 
 const DEFAULT_BASE_FEE = '100';
 const DEFAULT_MIN_FEE = '100';
@@ -202,7 +203,7 @@ function withTimeout(promise, timeoutMs) {
 }
 
 function getLogger(options) {
-  return options.logger || console;
+  return options.logger || defaultLogger;
 }
 
 function warn(logger, message) {

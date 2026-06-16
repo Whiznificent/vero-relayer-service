@@ -117,6 +117,9 @@ vero-relayer-service/
 
 | Variable | Required | Description |
 |---|---|---|
+| `LOG_LEVEL` | No | Pino log level, defaults to `info` |
+| `LOG_REDACT_REMOVE` | No | Set to `true` to remove redacted fields instead of replacing with `[Redacted]` |
+| `ENABLE_HTTP_REQUEST_LOGS` | No | Set to `false` to disable automatic request completion logs |
 | `STELLAR_SECRET_KEY` | Yes | Signing key for the relayer account |
 | `STELLAR_NETWORK` | No | `testnet` (default) or `mainnet` |
 | `STELLAR_RPC_URL` | No | Stellar RPC URL used for fee stats |
@@ -177,3 +180,23 @@ vero-relayer-service/
 4. Confirm logs include a fee line like `[fee] selected=<stroops> percentile=p75 min=<min> max=<max> source=<source>` before the transaction envelope log.
 5. Simulate high-fee stats in tests with `npm test`; the fee engine tests mock `getFeeStats` p75 values and verify fee increases and max caps.
 6. Lower `STELLAR_MAX_FEE` in a local `.env` and repeat a simulated high-fee test path to confirm the selected fee never exceeds the configured cap.
+
+---
+
+## Manual Logging Verification
+
+1. Set `LOG_LEVEL=info` and `ENABLE_HTTP_REQUEST_LOGS=true` in `.env`.
+2. Start the service with `npm start`.
+3. Send a request with a request ID:
+   ```bash
+   curl -H "Content-Type: application/json" -H "x-request-id: demo-request-1" \
+     -d "{\"action\":\"opened\"}" http://localhost:3000/github-webhook
+   ```
+4. Confirm terminal logs are JSON and include `time`, `level`, `message`, and `requestId`.
+5. Confirm request completion logs include method, path, status code, duration, and request ID.
+6. Trigger a safe enqueue error by stopping Redis and sending a qualifying webhook; confirm the error log contains an `err` object and request ID.
+7. Confirm authorization headers, passwords, tokens, private keys, Stellar secret keys, and raw request bodies are not printed.
+8. Search for direct console logging:
+   ```bash
+   rg "console\\.(log|warn|error|info|debug)" -g "!node_modules/**"
+   ```

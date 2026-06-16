@@ -2,6 +2,16 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { createApp } = require('../index');
 
+const silentLogger = {
+  info: () => {},
+  error: () => {},
+  warn: () => {},
+  debug: () => {},
+  child() {
+    return this;
+  }
+};
+
 function listen(app) {
   return new Promise(resolve => {
     const server = app.listen(0, () => {
@@ -24,6 +34,8 @@ function url(server, path) {
 test('github webhook enqueues qualifying events instead of broadcasting synchronously', async t => {
   const enqueuedEvents = [];
   const app = createApp({
+    logger: silentLogger,
+    enableHttpRequestLogs: false,
     enqueueEventJob: async eventPayload => {
       enqueuedEvents.push(eventPayload);
       return { id: 'job-42' };
@@ -61,6 +73,8 @@ test('github webhook enqueues qualifying events instead of broadcasting synchron
 
 test('github webhook keeps existing skipped response for non-qualifying events', async t => {
   const app = createApp({
+    logger: silentLogger,
+    enableHttpRequestLogs: false,
     enqueueEventJob: async () => {
       throw new Error('should not enqueue skipped events');
     }

@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const { UnrecoverableError, Worker } = require('bullmq');
 const { registerTaskOnChain } = require('../../stellar');
+const { logger } = require('../logger');
 const { EVENT_TYPES } = require('../queue/types');
 const {
   getBullMqQueueSettings,
@@ -27,8 +28,13 @@ function getPullRequestNumber(data) {
 async function processEventJob(job, dependencies = {}) {
   const eventType = getJobEventType(job);
   const broadcaster = dependencies.registerTaskOnChain || registerTaskOnChain;
+  const jobLogger = (dependencies.logger || logger).child({
+    jobId: job.id,
+    eventType,
+    requestId: job.data && job.data.requestId
+  });
 
-  console.log(`[worker] job=${job.id} eventType=${eventType} attempt=${getJobAttempt(job)} status=started`);
+  jobLogger.info({ attempt: getJobAttempt(job) }, 'event job started');
 
   if (eventType !== EVENT_TYPES.GITHUB_PULL_REQUEST_MERGED) {
     throw new UnrecoverableError(`Unsupported event type: ${eventType}`);
@@ -40,7 +46,7 @@ async function processEventJob(job, dependencies = {}) {
     throw new UnrecoverableError('Invalid event payload: missing pull request number');
   }
 
-  await broadcaster(pullRequestNumber);
+  await broadcaster(pullRequestNumber, { logger: jobLogger });
 
   return {
     pr: pullRequestNumber
@@ -60,18 +66,29 @@ function createEventWorker(options = {}) {
   });
 
   worker.on('completed', job => {
-    console.log(`[worker] job=${job.id} eventType=${getJobEventType(job)} attempt=${job.attemptsMade + 1} status=completed`);
+    logger.info({
+      jobId: job.id,
+      eventType: getJobEventType(job),
+      attempt: job.attemptsMade + 1,
+      requestId: job.data && job.data.requestId
+    }, 'event job completed');
   });
 
   worker.on('failed', (job, error) => {
     const jobId = job ? job.id : 'unknown';
     const eventType = job ? getJobEventType(job) : 'unknown';
     const attempt = job ? `${job.attemptsMade}/${(job.opts && job.opts.attempts) || 1}` : 'unknown';
-    console.error(`[worker] job=${jobId} eventType=${eventType} attempt=${attempt} status=failed error=${error.message}`);
+    logger.error({
+      err: error,
+      jobId,
+      eventType,
+      attempt,
+      requestId: job && job.data && job.data.requestId
+    }, 'event job failed');
   });
 
   worker.on('error', error => {
-    console.error(`[worker] status=error error=${error.message}`);
+    logger.error({ err: error }, 'event worker error');
   });
 
   return worker;
@@ -85,7 +102,7 @@ async function startEventWorker() {
   const worker = createEventWorker({ queueName, concurrency });
   let closing = false;
 
-  console.log(`[worker] status=started queue=${queueName} concurrency=${concurrency}`);
+  logger.info({ queueName, concurrency }, 'event worker started');
 
   async function shutdown(signal) {
     if (closing) {
@@ -93,21 +110,21 @@ async function startEventWorker() {
     }
 
     closing = true;
-    console.log(`[worker] status=shutdown signal=${signal}`);
+    logger.info({ signal }, 'event worker shutting down');
     await worker.close();
     process.exit(0);
   }
 
   process.on('SIGTERM', () => {
     shutdown('SIGTERM').catch(error => {
-      console.error(`[worker] status=shutdown_failed error=${error.message}`);
+      logger.error({ err: error }, 'event worker shutdown failed');
       process.exit(1);
     });
   });
 
   process.on('SIGINT', () => {
     shutdown('SIGINT').catch(error => {
-      console.error(`[worker] status=shutdown_failed error=${error.message}`);
+      logger.error({ err: error }, 'event worker shutdown failed');
       process.exit(1);
     });
   });
@@ -117,7 +134,7 @@ async function startEventWorker() {
 
 if (require.main === module) {
   startEventWorker().catch(error => {
-    console.error(`[worker] status=startup_failed error=${error.message}`);
+    logger.error({ err: error }, 'event worker startup failed');
     process.exit(1);
   });
 }

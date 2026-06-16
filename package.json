@@ -17,7 +17,8 @@
     "@stellar/stellar-sdk": "12.3.0",
     "bullmq": "^5.78.1",
     "dotenv": "16.4.5",
-    "express": "4.19.2"
+    "express": "4.19.2",
+    "pino": "^10.3.1"
   },
   "devDependencies": {
     "@types/node": "^25.9.3",

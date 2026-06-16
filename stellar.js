@@ -1,5 +1,6 @@
 require('dotenv').config();
 
+const { logger } = require('./src/logger');
 const { estimateStellarFee } = require('./src/services/fee-engine');
 
 async function submitTransaction(transaction) {
@@ -12,15 +13,16 @@ async function registerTaskOnChain(githubId, options = {}) {
   const { STELLAR_SECRET_KEY, STELLAR_NETWORK } = process.env;
   const estimateFee = options.estimateFee || estimateStellarFee;
   const submit = options.submitTransaction || submitTransaction;
+  const log = options.logger || logger;
 
-  console.log('[stellar] Loading keys...');
-  console.log(`[stellar] Network: ${STELLAR_NETWORK || 'testnet'}`);
-  console.log(`[stellar] Secret key loaded: ${STELLAR_SECRET_KEY ? 'yes' : 'no (missing)'}`);
+  log.info({
+    network: STELLAR_NETWORK || 'testnet',
+    hasSigningKey: Boolean(STELLAR_SECRET_KEY)
+  }, 'stellar configuration loaded');
 
   const fee = await estimateFee();
 
-  console.log(`[stellar] Compiling transaction for GitHub PR #${githubId}...`);
-  console.log(`[stellar] Transaction envelope built: { op: "manageData", key: "vero:pr:${githubId}", value: "registered", fee: "${fee}" }`);
+  log.info({ pr: githubId, fee }, 'building stellar transaction');
 
   const result = await submit({
     githubId,
@@ -30,8 +32,8 @@ async function registerTaskOnChain(githubId, options = {}) {
     value: 'registered'
   });
 
-  console.log(`[stellar] Transaction submitted (simulated). Hash: ${result.hash}`);
-  console.log(`[stellar] PR #${githubId} successfully registered on-chain.`);
+  log.info({ pr: githubId, hash: result.hash }, 'stellar transaction submitted');
+  log.info({ pr: githubId }, 'pull request registered on-chain');
 }
 
 module.exports = { registerTaskOnChain };
