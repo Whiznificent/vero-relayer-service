@@ -3,8 +3,8 @@ const client = require('prom-client');
 // Collect default metrics (process, memory, etc.)
 client.collectDefaultMetrics();
 
-// Counter for total processed events
-// Counter for total processed events, now labeled by task_type for better granularity
+// Counter for total processed events, labeled by task_type for better granularity
+const vero_events_processed_total = new client.Counter({
   name: 'vero_events_processed_total',
   help: 'Total number of processed Vero events',
   labelNames: ['task_type'],
