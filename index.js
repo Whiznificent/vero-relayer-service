@@ -5,65 +5,28 @@ const {
   enqueueEvent,
   validateRedisConfig
 } = require('./src/queue');
+const { verifySignature } = require('./src/middleware/auth');
+const { registerMetrics } = require('./src/metrics/metrics');
+const { logger } = require('./src/logger');
+const { startConfigPoller } = require('./src/services/config-poller');
 
 function createApp(options = {}) {
   const enqueueEventJob = options.enqueueEventJob || enqueueEvent;
   const app = express();
 
-  app.use(express.json());
-const { registerTaskOnChain } = require('./stellar');
-const { verifySignature } = require('./src/middleware/auth');
-
-// Inline require of the compiled/ts-node batcher. Using require with ts-node
-// registration, or the plain JS equivalent below if TS is not bootstrapped.
-let EventBatcher;
-try {
-  require('ts-node/register');
-  ({ EventBatcher } = require('./src/queue/batcher'));
-} catch {
-  // Fallback: inline minimal batcher so the server still boots without ts-node
-  EventBatcher = class {
-    constructor(flush) { this.flush = flush; this.queue = []; this.timer = null; }
-    enqueue(id) {
-      this.queue.push(id);
-      if (!this.timer) this.timer = setTimeout(() => this._drain(), 5000);
-      if (this.queue.length >= 50) this._drain();
+  app.use(express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
     }
-    _drain() {
-      clearTimeout(this.timer); this.timer = null;
-      if (!this.queue.length) return;
-      const batch = this.queue.splice(0);
-      this.flush(batch).catch(e => console.error('[batcher] flush error:', e));
-    }
-  };
-}
+  }));
 
-const batcher = new EventBatcher(registerBatchOnChain);
+  registerMetrics(app);
 
-const app = express();
-app.use(express.json({
-  verify: (req, res, buf) => {
-    req.rawBody = buf;
-  }
-}));
-
-  app.get('/health', (_req, res) => {
-    res.status(200).json({ ok: true, service: 'vero-relayer-service' });
+  app.get('/health', (req, res) => {
+    res.status(200).send('OK');
   });
 
-  app.get('/diagnostics', async (_req, res) => {
-    try {
-      const report = await getDiagnosticReport();
-      res.status(report.summary.ok ? 200 : 503).json(report);
-    } catch (error) {
-      res.status(500).json({
-        status: 'error',
-        error: error.message
-      });
-    }
-  });
-
-  app.post('/github-webhook', verifyWebhook, async (req, res) => {
+  app.post('/github-webhook', verifySignature, async (req, res) => {
     const { action, pull_request: pr } = req.body;
 
     if (action !== 'closed' || !pr?.merged) {
@@ -79,17 +42,10 @@ app.use(express.json({
 
     try {
       const job = await enqueueEventJob(eventPayload);
-      logger.info({
-        pr: pr.number,
-        eventType: eventPayload.eventType,
-        jobId: job.id
-      }, 'webhook event queued');
+      logger.info({ pr: pr.number, eventType: eventPayload.eventType, jobId: job.id }, '[webhook] queued PR event');
       return res.status(202).json({ ok: true, pr: pr.number, queued: true, jobId: job.id });
     } catch (error) {
-      logger.error({
-        pr: pr.number,
-        error: error.message
-      }, 'webhook event enqueue failed');
+      logger.error({ pr: pr.number, error: error.message }, '[webhook] failed to enqueue PR');
       return res.status(500).json({ ok: false, error: 'failed to enqueue event' });
     }
   });
@@ -99,7 +55,7 @@ app.use(express.json({
 
 function startServer() {
   validateRedisConfig();
-  initializeTracing();
+  startConfigPoller();
 
   const port = process.env.PORT || 3000;
   const app = createApp();
@@ -107,8 +63,7 @@ function startServer() {
     logger.info({ port }, 'server listening');
   });
 
-  startHeartbeatService();
-  return server;
+  return app.listen(port, () => logger.info({ port }, 'Server listening on port'));
 }
 
 if (require.main === module) {
@@ -119,4 +74,3 @@ module.exports = {
   createApp,
   startServer
 };
-

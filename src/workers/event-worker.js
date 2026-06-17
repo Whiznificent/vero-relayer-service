@@ -13,6 +13,11 @@ const {
 const { createEventQueue } = require('../queue/event-queue');
 const { createCleanupJob } = require('../queue/cleanup');
 const { logger } = require('../logger');
+const {
+  vero_events_processed_total,
+  queue_latency_seconds
+} = require('../metrics/metrics');
+const { startConfigPoller, stopConfigPoller } = require('../services/config-poller');
 
 function getJobEventType(job) {
   return (job && job.data && job.data.eventType) || 'unknown';
@@ -31,7 +36,7 @@ async function processEventJob(job, dependencies = {}) {
   const eventType = getJobEventType(job);
   const broadcaster = dependencies.registerTaskOnChain || registerTaskOnChain;
 
-  logger.info({ jobId: job.id, eventType, attempt: getJobAttempt(job) }, 'worker job started');
+  logger.info({ jobId: job.id, eventType, attempt: getJobAttempt(job) }, '[worker] Event processing started');
 
   if (eventType !== EVENT_TYPES.GITHUB_PULL_REQUEST_MERGED) {
     throw new UnrecoverableError(`Unsupported event type: ${eventType}`);
@@ -44,6 +49,17 @@ async function processEventJob(job, dependencies = {}) {
   }
 
   await broadcaster(pullRequestNumber);
+
+  try {
+    vero_events_processed_total.inc();
+    if (job.data && job.data.receivedAt) {
+      const receivedAt = new Date(job.data.receivedAt).getTime();
+      const durationSec = (Date.now() - receivedAt) / 1000;
+      queue_latency_seconds.observe(durationSec);
+    }
+  } catch (metricsError) {
+    logger.warn({ error: metricsError.message }, 'Failed to record metrics in worker');
+  }
 
   return {
     pr: pullRequestNumber
@@ -63,18 +79,18 @@ function createEventWorker(options = {}) {
   });
 
   worker.on('completed', job => {
-    logger.info({ jobId: job.id, eventType: getJobEventType(job), attempt: job.attemptsMade + 1 }, 'worker job completed');
+    logger.info({ jobId: job.id, eventType: getJobEventType(job), attempt: job.attemptsMade + 1 }, '[worker] Job completed successfully');
   });
 
   worker.on('failed', (job, error) => {
     const jobId = job ? job.id : 'unknown';
     const eventType = job ? getJobEventType(job) : 'unknown';
     const attempt = job ? `${job.attemptsMade}/${(job.opts && job.opts.attempts) || 1}` : 'unknown';
-    logger.error({ jobId, eventType, attempt, error: error.message }, 'worker job failed');
+    logger.error({ jobId, eventType, attempt, error: error.message }, '[worker] Job failed');
   });
 
   worker.on('error', error => {
-    logger.error({ error: error.message }, 'worker error');
+    logger.error({ error: error.message }, '[worker] Error occurred');
   });
 
   return worker;
@@ -86,12 +102,14 @@ async function startEventWorker() {
   const worker = createEventWorker({ queueName, concurrency });
   let closing = false;
 
+  startConfigPoller();
+
   const cleanupQueue = createEventQueue();
   const cleanupTask = createCleanupJob(cleanupQueue, { logger });
   cleanupTask.start();
   logger.info({ queue: queueName }, 'queue cleanup job scheduled (daily at midnight UTC)');
 
-  logger.info({ queueName, concurrency }, 'worker started');
+  logger.info({ queue: queueName, concurrency }, '[worker] Started successfully');
 
   async function shutdown(signal) {
     if (closing) {
@@ -99,21 +117,24 @@ async function startEventWorker() {
     }
 
     closing = true;
-    logger.info({ signal }, 'worker shutting down');
+    logger.info({ signal }, '[worker] Shutdown initiated');
+    cleanupTask.stop();
+    stopConfigPoller();
+    await cleanupQueue.close();
     await worker.close();
     process.exit(0);
   }
 
   process.on('SIGTERM', () => {
     shutdown('SIGTERM').catch(error => {
-      logger.error({ error: error.message }, 'worker shutdown failed');
+      logger.error({ error: error.message }, '[worker] Shutdown failed');
       process.exit(1);
     });
   });
 
   process.on('SIGINT', () => {
     shutdown('SIGINT').catch(error => {
-      logger.error({ error: error.message }, 'worker shutdown failed');
+      logger.error({ error: error.message }, '[worker] Shutdown failed');
       process.exit(1);
     });
   });
@@ -123,7 +144,7 @@ async function startEventWorker() {
 
 if (require.main === module) {
   startEventWorker().catch(error => {
-    logger.error({ error: error.message }, 'worker startup failed');
+    logger.error({ error: error.message }, '[worker] Startup failed');
     process.exit(1);
   });
 }

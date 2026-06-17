@@ -14,6 +14,8 @@ const { logger } = require('../logger');
 
 type FlushFn = (ids: number[]) => Promise<void>;
 
+import { logger } from '../logger';
+
 const MAX_BATCH_SIZE = 50; // hard cap — Stellar max is 100 ops
 const WINDOW_MS = 5_000;   // 5-second aggregation window
 
@@ -40,8 +42,8 @@ export class EventBatcher {
     }
     if (this.queue.length === 0) return;
     const batch = this.queue.splice(0);
-    this.flush(batch).catch(err => {
-      logger.error({ error: err.message }, 'batcher flush failed');
-    });
+    this.flush(batch).catch(err =>
+      logger.error({ err }, '[batcher] flush error')
+    );
   }
 }
