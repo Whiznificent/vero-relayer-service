@@ -6,9 +6,8 @@ const { retry } = require('./src/utils/retry');
 function getServer() {
   const { StellarSdk } = require('@stellar/stellar-sdk');
   const network = process.env.STELLAR_NETWORK || 'testnet';
-  const serverUrl = network === 'mainnet'
-    ? 'https://horizon.stellar.org'
-    : 'https://horizon-testnet.stellar.org';
+  const { HORIZON_URLS } = require('./src/config/stellar');
+  const serverUrl = HORIZON_URLS[network] || HORIZON_URLS['testnet'];
   return new StellarSdk.Horizon.Server(serverUrl);
 }
 
