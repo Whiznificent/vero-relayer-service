@@ -1,6 +1,14 @@
 const assert = require('node:assert/strict');
 const { test, mock } = require('node:test');
-const { cleanFailedJobs, createCleanupJob, SEVEN_DAYS_MS, CLEANUP_BATCH_LIMIT } = require('../src/queue/cleanup');
+const {
+  cleanFailedJobs,
+  cleanCompletedJobs,
+  cleanStaleJobs,
+  createCleanupJob,
+  ONE_DAY_MS,
+  SEVEN_DAYS_MS,
+  CLEANUP_BATCH_LIMIT
+} = require('../src/queue/cleanup');
 
 function makeQueue(removedIds = ['job-1', 'job-2']) {
   return {
@@ -111,4 +119,96 @@ test('createCleanupJob logs error without throwing when cleanup fails mid-run', 
   const errorLogs = logger._calls.filter(c => c.level === 'error');
   assert.ok(errorLogs.length >= 1, 'expected at least one error log');
   assert.match(errorLogs[0].data.error, /timeout/);
+});
+
+test('cleanCompletedJobs purges completed jobs with a one-day default grace', async () => {
+  const calls = [];
+  const queue = {
+    name: 'test-queue',
+    clean: async (grace, limit, type) => {
+      calls.push({ grace, limit, type });
+      return ['c-1', 'c-2'];
+    }
+  };
+
+  const removed = await cleanCompletedJobs(queue, { logger: makeLogger() });
+
+  assert.deepEqual(removed, ['c-1', 'c-2']);
+  assert.equal(calls[0].type, 'completed');
+  assert.equal(calls[0].grace, ONE_DAY_MS);
+  assert.equal(calls[0].limit, CLEANUP_BATCH_LIMIT);
+});
+
+test('cleanStaleJobs purges completed and failed jobs with per-state grace periods', async () => {
+  const calls = [];
+  const removedByType = { completed: ['c-1', 'c-2', 'c-3'], failed: ['f-1'] };
+  const queue = {
+    name: 'test-queue',
+    clean: async (grace, limit, type) => {
+      calls.push({ grace, limit, type });
+      return removedByType[type] || [];
+    }
+  };
+
+  const summary = await cleanStaleJobs(queue, { logger: makeLogger() });
+
+  assert.deepEqual(calls.map(c => c.type), ['completed', 'failed']);
+  assert.equal(calls.find(c => c.type === 'completed').grace, ONE_DAY_MS);
+  assert.equal(calls.find(c => c.type === 'failed').grace, SEVEN_DAYS_MS);
+  assert.deepEqual(summary, { total: 4, completed: 3, failed: 1 });
+});
+
+test('cleanStaleJobs logs an audited summary of removed counts', async () => {
+  const queue = {
+    name: 'test-queue',
+    clean: async (grace, limit, type) => (type === 'completed' ? ['c-1', 'c-2'] : ['f-1'])
+  };
+  const logger = makeLogger();
+
+  await cleanStaleJobs(queue, { logger });
+
+  const summaryLog = logger._calls.find(c => c.msg === 'queue cleanup summary');
+  assert.ok(summaryLog, 'expected a summary log line');
+  assert.equal(summaryLog.data.total, 3);
+  assert.equal(summaryLog.data.completed, 2);
+  assert.equal(summaryLog.data.failed, 1);
+});
+
+test('cleanStaleJobs honours custom targets', async () => {
+  const calls = [];
+  const queue = {
+    name: 'test-queue',
+    clean: async (grace, limit, type) => {
+      calls.push({ grace, limit, type });
+      return [];
+    }
+  };
+
+  await cleanStaleJobs(queue, {
+    logger: makeLogger(),
+    targets: [{ type: 'completed', grace: 5000 }]
+  });
+
+  assert.deepEqual(calls.map(c => c.type), ['completed']);
+  assert.equal(calls[0].grace, 5000);
+});
+
+test('createCleanupJob purges both completed and failed jobs on each run', async () => {
+  const cleanedTypes = [];
+  const queue = {
+    name: 'sched-queue',
+    clean: async (grace, limit, type) => {
+      cleanedTypes.push(type);
+      return [];
+    }
+  };
+
+  const task = createCleanupJob(queue, { logger: makeLogger(), schedule: '* * * * * *' });
+  task.start();
+
+  await new Promise(resolve => setTimeout(resolve, 1100));
+  task.stop();
+
+  assert.ok(cleanedTypes.includes('completed'), 'expected completed jobs to be purged');
+  assert.ok(cleanedTypes.includes('failed'), 'expected failed jobs to be purged');
 });

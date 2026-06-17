@@ -106,7 +106,7 @@ async function startEventWorker() {
   const cleanupQueue = createEventQueue();
   const cleanupTask = createCleanupJob(cleanupQueue, { logger });
   cleanupTask.start();
-  logger.info({ queue: queueName }, 'queue cleanup job scheduled (daily at midnight UTC)');
+  logger.info({ queue: queueName }, 'queue cleanup job scheduled (purges stale completed and failed jobs daily at midnight UTC)');
 
   logger.info({ queue: queueName, concurrency }, '[worker] Started successfully');
 

@@ -206,6 +206,26 @@ adds **value-level** scrubbing that the path redactor cannot do:
 
 ---
 
+## Automated Queue Cleanup
+
+To prevent unbounded queue growth, the worker schedules a [node-cron](https://www.npmjs.com/package/node-cron)
+job (`src/queue/cleanup.js`) that runs daily at midnight UTC and purges stale jobs
+from Redis in bounded batches (at most `1000` jobs per state per run, via BullMQ's
+`queue.clean`):
+
+| Job state | Default grace | Rationale |
+|---|---|---|
+| `completed` | 1 day | Main driver of unbounded growth — BullMQ retains completed jobs indefinitely by default |
+| `failed` | 7 days | Kept longer for inspection, then purged |
+
+Each run emits audited log lines per state (`queue cleanup started` / `completed`) plus
+a `queue cleanup summary` with the removed counts (`{ completed, failed, total }`). A
+failed cleanup run is logged and swallowed so it never crashes the worker. Grace periods,
+batch limit, schedule, and the set of purged states are all overridable via
+`createCleanupJob` options.
+
+---
+
 ## M-of-N Multi-Signature Admin Architecture
 
 The `contracts/vero-admin` Soroban contract replaces the previous single-key admin model with a threshold-based multisig scheme, eliminating the "God-key" vulnerability.
