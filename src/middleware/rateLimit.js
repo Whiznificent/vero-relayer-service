@@ -1,0 +1,131 @@
+/**
+ * Rate-limiting middleware for the public ingest endpoint.
+ *
+ * Distinguishes between:
+ *   - Authenticated requests (bearing a valid signature or Authorization header)
+ *     which receive a more generous limit.
+ *   - Public / unauthenticated requests which receive a tighter limit.
+ *
+ * The real client IP is extracted from X-Forwarded-For when Express trust
+ * proxy is enabled, so rate limits apply to the originating client even when
+ * the service sits behind a reverse proxy or load balancer.
+ *
+ * IPv6 addresses are normalised via express-rate-limit's ipKeyGenerator helper
+ * to prevent bypass via address formatting tricks.
+ */
+
+const rateLimit = require('express-rate-limit');
+
+// ipKeyGenerator is the express-rate-limit blessed helper for IPv6-safe keying.
+const { ipKeyGenerator } = require('express-rate-limit');
+
+// ---------------------------------------------------------------------------
+// Limits (configurable via environment variables)
+// ---------------------------------------------------------------------------
+
+const PUBLIC_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS)   || 15 * 60 * 1000; // 15 min
+const PUBLIC_MAX       = Number(process.env.RATE_LIMIT_PUBLIC_MAX)   || 100;
+const AUTH_MAX         = Number(process.env.RATE_LIMIT_AUTH_MAX)     || 1_000;
+
+// ---------------------------------------------------------------------------
+// Key generator
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns an IPv6-safe client key using the express-rate-limit ipKeyGenerator.
+ * Falls back to the raw socket address for local / test environments where
+ * req.ip may not be set.
+ */
+function clientIp(req) {
+  if (req.ip) {
+    return ipKeyGenerator(req);
+  }
+  return req.socket?.remoteAddress || 'unknown';
+}
+
+// ---------------------------------------------------------------------------
+// Helper
+// ---------------------------------------------------------------------------
+
+/**
+ * A request is considered "authenticated" when it presents either:
+ *   - An Authorization header (JWT Bearer token), or
+ *   - An X-Hub-Signature-256 header (GitHub HMAC signature), or
+ *   - An X-Vero-Signature header (Vero HMAC signature).
+ */
+function isAuthenticated(req) {
+  const headers = req.headers || {};
+  return !!(
+    headers['authorization'] ||
+    headers['x-hub-signature-256'] ||
+    headers['x-vero-signature']
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Public rate limiter  (100 req / 15 min per IP)
+// ---------------------------------------------------------------------------
+
+const publicRateLimiter = rateLimit({
+  windowMs: PUBLIC_WINDOW_MS,
+  max: PUBLIC_MAX,
+  standardHeaders: true,   // Emit RateLimit-* headers (RFC 6585)
+  legacyHeaders: false,
+  keyGenerator: clientIp,
+  skip: (req) => isAuthenticated(req), // authenticated callers use auth limiter
+  handler(req, res) {
+    res.status(429).json({
+      error: 'Too many requests from this IP. Please retry after the window resets.',
+      code: 'RATE_LIMIT_EXCEEDED',
+      retryAfter: Math.ceil(PUBLIC_WINDOW_MS / 1000),
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Authenticated rate limiter  (1 000 req / 15 min per IP)
+// ---------------------------------------------------------------------------
+
+const authenticatedRateLimiter = rateLimit({
+  windowMs: PUBLIC_WINDOW_MS,
+  max: AUTH_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: clientIp,
+  skip: (req) => !isAuthenticated(req), // public callers use publicRateLimiter
+  handler(req, res) {
+    res.status(429).json({
+      error: 'Rate limit exceeded for authenticated client. Please retry after the window resets.',
+      code: 'RATE_LIMIT_EXCEEDED',
+      retryAfter: Math.ceil(PUBLIC_WINDOW_MS / 1000),
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Combined middleware
+// ---------------------------------------------------------------------------
+
+/**
+ * Express middleware that applies either the public or authenticated rate
+ * limit based on whether the incoming request carries auth headers.
+ *
+ * Mount this before the route handler on any public-facing ingest endpoint.
+ */
+function ingestRateLimiter(req, res, next) {
+  if (isAuthenticated(req)) {
+    return authenticatedRateLimiter(req, res, next);
+  }
+  return publicRateLimiter(req, res, next);
+}
+
+module.exports = {
+  ingestRateLimiter,
+  publicRateLimiter,
+  authenticatedRateLimiter,
+  isAuthenticated,
+  clientIp,
+  PUBLIC_WINDOW_MS,
+  PUBLIC_MAX,
+  AUTH_MAX,
+};

@@ -9,10 +9,15 @@ const {
 const { registerMetrics } = require('./src/metrics/metrics');
 const { logger } = require('./src/logger');
 const { startConfigPoller } = require('./src/services/config-poller');
+const { ingestRateLimiter } = require('./src/middleware/rateLimit');
 
 function createApp(options = {}) {
   const enqueueEventJob = options.enqueueEventJob || enqueueEvent;
   const app = express();
+
+  // Trust the first proxy hop so X-Forwarded-For is used to resolve the real
+  // client IP — required for accurate per-IP rate limiting behind a load balancer.
+  app.set('trust proxy', 1);
 
   app.use(express.json({
     verify: (req, res, buf) => {
@@ -26,8 +31,8 @@ function createApp(options = {}) {
     res.status(200).send('OK');
   });
 
-  // GitHub webhook endpoint
-  app.post('/github-webhook', verifySignature, async (req, res) => {
+  // GitHub webhook endpoint — rate-limited before signature verification
+  app.post('/github-webhook', ingestRateLimiter, verifySignature, async (req, res) => {
     const { action, pull_request: pr } = req.body;
     if (action !== 'closed' || !pr?.merged) {
       return res.status(200).json({ skipped: true });
