@@ -50,11 +50,12 @@ async function processEventJob(job, dependencies = {}) {
   await broadcaster(pullRequestNumber);
 
   try {
-    vero_events_processed_total.inc();
+    const taskType = eventType || 'unknown';
+    vero_events_processed_total.labels({ task_type: taskType }).inc();
     if (job.data && job.data.receivedAt) {
       const receivedAt = new Date(job.data.receivedAt).getTime();
       const durationSec = (Date.now() - receivedAt) / 1000;
-      queue_latency_seconds.observe(durationSec);
+      queue_latency_seconds.labels({ task_type: taskType }).observe(durationSec);
     }
   } catch (metricsError) {
     logger.warn({ error: metricsError.message }, 'Failed to record metrics in worker');

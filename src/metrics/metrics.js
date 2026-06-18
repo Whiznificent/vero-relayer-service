@@ -14,6 +14,7 @@ const vero_events_processed_total = new client.Counter({
 const queue_latency_seconds = new client.Histogram({
   name: 'queue_latency_seconds',
   help: 'Queue latency in seconds',
+  labelNames: ['task_type'],
   buckets: [0.1, 0.5, 1, 2, 5, 10],
 });
 

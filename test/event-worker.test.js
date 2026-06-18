@@ -54,3 +54,32 @@ test('processEventJob rejects invalid jobs without calling broadcaster', async (
   );
   assert.deepEqual(calls, []);
 });
+
+test('processEventJob registers metrics with task_type label', async () => {
+  const { vero_events_processed_total, queue_latency_seconds } = require('../src/metrics/metrics');
+
+  const payload = buildGitHubPullRequestEventPayload({
+    action: 'closed',
+    pull_request: {
+      number: 43,
+      merged: true,
+      labels: [{ name: 'wave-contribution' }]
+    }
+  }, { deliveryId: 'delivery-worker-2', receivedAt: new Date().toISOString() });
+
+  const initialValue = await vero_events_processed_total.get();
+  const initialCount = initialValue.values.find(v => v.labels.task_type === 'github.pull_request.merged')?.value || 0;
+
+  await processEventJob(job(payload), {
+    registerTaskOnChain: async () => {}
+  });
+
+  const afterValue = await vero_events_processed_total.get();
+  const afterCount = afterValue.values.find(v => v.labels.task_type === 'github.pull_request.merged')?.value || 0;
+
+  assert.equal(afterCount, initialCount + 1);
+
+  const latencyValue = await queue_latency_seconds.get();
+  const latencyVal = latencyValue.values.find(v => v.labels.task_type === 'github.pull_request.merged');
+  assert.ok(latencyVal);
+});
