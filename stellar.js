@@ -3,6 +3,7 @@ const { Keypair, TransactionBuilder, Networks, Operation } = require('@stellar/s
 const { broadcastTransaction, fetchAccount } = require('./src/services/broadcaster');
 const { estimateStellarFee } = require('./src/services/fee-engine');
 const { transactionLogger } = require('./src/services/transaction-logger');
+const nonceManager = require('./src/relayer/nonceManager');
 
 const { rpcFactory } = require('./src/services');
 
@@ -19,32 +20,36 @@ async function submitTransaction(transaction) {
   const server = rpcFactory.getHorizonServer();
   const txLog = transactionLogger.child({ githubId: transaction.githubId, network });
 
-  txLog.started({ account: publicKey }, '[stellar] Loading account...');
+  txLog.started({ account: publicKey }, '[stellar] Loading account with sequential nonce guarantee...');
 
-  const account = await fetchAccount(server, publicKey);
+  return nonceManager.withSequentialNonce(
+    publicKey,
+    () => fetchAccount(server, publicKey),
+    async (account) => {
+      const tx = new TransactionBuilder(account, {
+        fee: transaction.fee,
+        networkPassphrase,
+      })
+        .addOperation(Operation.manageData({
+          name: transaction.key,
+          value: transaction.value,
+        }))
+        .setTimeout(30)
+        .build();
 
-  const tx = new TransactionBuilder(account, {
-    fee: transaction.fee,
-    networkPassphrase,
-  })
-    .addOperation(Operation.manageData({
-      name: transaction.key,
-      value: transaction.value,
-    }))
-    .setTimeout(30)
-    .build();
+      tx.sign(keypair);
 
-  tx.sign(keypair);
+      txLog.submitting({ account: publicKey, fee: transaction.fee, feeSource: transaction.feeSource || 'default' }, '[stellar] Submitting transaction for PR...');
 
-  txLog.submitting({ account: publicKey, fee: transaction.fee, feeSource: transaction.feeSource || 'default' }, '[stellar] Submitting transaction for PR...');
-
-  try {
-    const result = await broadcastTransaction(server, tx);
-    return result;
-  } catch (error) {
-    txLog.failed({ account: publicKey }, error, '[stellar] Transaction submission failed');
-    throw error;
-  }
+      try {
+        const result = await broadcastTransaction(server, tx);
+        return result;
+      } catch (error) {
+        txLog.failed({ account: publicKey }, error, '[stellar] Transaction submission failed');
+        throw error;
+      }
+    }
+  );
 }
 
 async function registerTaskOnChain(githubId, options = {}) {
