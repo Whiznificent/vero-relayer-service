@@ -11,6 +11,14 @@ class RpcFactory {
     this.rpcInstances = new Map();
   }
 
+  /**
+   * Return the active Stellar network name for cache key scoping.
+   * @returns {string} 'testnet' or 'mainnet'
+   */
+  getNetwork() {
+    return process.env.STELLAR_NETWORK || 'testnet';
+  }
+
   _parseUrls(urlsEnv, singleUrlEnv, type) {
     const network = process.env.STELLAR_NETWORK || 'testnet';
     const defaultUrls = type === 'horizon'
@@ -104,3 +112,4 @@ class RpcFactory {
 }
 
 module.exports = new RpcFactory();
+module.exports.RpcFactory = RpcFactory;

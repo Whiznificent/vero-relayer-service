@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const { rpc } = require('@stellar/stellar-sdk');
 const rpcFactory = require('./rpc-factory');
+const { createRpcCache } = require('./rpc-cache');
 
 const DEFAULT_BASE_FEE = '100';
 const DEFAULT_MIN_FEE = '100';
@@ -11,6 +12,20 @@ const DEFAULT_MULTIPLIER = '1';
 const DEFAULT_CACHE_MS = 0;
 const DEFAULT_TIMEOUT_MS = 3000;
 const CLASSIC_FEE_DISTRIBUTION = 'inclusionFee';
+
+const FEE_CACHE_TTL_MS = Number(process.env.RPC_CACHE_TTL_FEE) || 60_000;
+
+// Persistent Redis-backed cache for fee stats — survives restarts and is
+// shared across workers so repeated fee estimates hit the cache.
+const rpcCache = createRpcCache();
+const cachedGetFeeStats = rpcCache.wrap(
+  (client) => client.getFeeStats(),
+  {
+    keyPrefix: 'fee-stats',
+    ttlMs: FEE_CACHE_TTL_MS,
+    keyFn: () => 'global' // fee stats are network-wide, not per-account
+  }
+);
 
 let cachedEstimate = null;
 
@@ -305,7 +320,7 @@ async function estimateStellarFeeDetails(options = {}) {
     if (!client) {
       warn(logger, '[fee] Stellar RPC URL not configured; using fallback fee');
     } else {
-      const stats = await withTimeout(client.getFeeStats(), config.timeoutMs);
+      const stats = await withTimeout(cachedGetFeeStats(client), config.timeoutMs);
       const feeFromStats = extractPercentileFee(stats, config.percentile);
 
       if (feeFromStats === null) {
