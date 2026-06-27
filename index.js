@@ -10,6 +10,7 @@ const { registerMetrics } = require('./src/metrics/metrics');
 const { logger } = require('./src/logger');
 const { startConfigPoller } = require('./src/services/config-poller');
 const { ingestRateLimiter } = require('./src/middleware/rateLimit');
+const { runMigrations } = require('./src/db/run-migrations');
 
 function createApp(options = {}) {
   const enqueueEventJob = options.enqueueEventJob || enqueueEvent;
@@ -57,6 +58,14 @@ function createApp(options = {}) {
 }
 
 async function startServer() {
+  // Run database migrations before accepting connections
+  try {
+    await runMigrations();
+    logger.info('[startup] Database migrations complete');
+  } catch (migrationErr) {
+    logger.error({ error: migrationErr.message }, '[startup] Database migrations failed — continuing');
+  }
+
   validateRedisConfig();
   startConfigPoller();
 
